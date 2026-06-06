@@ -20,7 +20,7 @@ git add packages/semantic-memory
 git commit -m "feat: add semantic-memory plugin for distribution"
 git push
 
-# Or create separate repo at https://github.com/bubbuild/bub-semantic-memory
+# Or use standalone repo at https://github.com/yibie/bub-semantic-memory
 ```
 
 ### Step 2: Build & Publish to PyPI
@@ -40,9 +40,9 @@ Add `plugins/semantic-memory.json`:
   "description": "Extract and retain semantic entities and relations from conversations",
   "author": "Bub Community",
   "license": "Apache-2.0",
-  "repository": "https://github.com/bubbuild/bub",
+  "repository": "https://github.com/yibie/bub-semantic-memory",
   "pypi": "bub-semantic-memory",
-  "documentation": "https://github.com/bubbuild/bub#semantic-memory",
+  "documentation": "https://github.com/yibie/bub-semantic-memory#readme",
   "categories": ["memory", "context"]
 }
 ```

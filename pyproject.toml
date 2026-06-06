@@ -21,7 +21,7 @@ dependencies = [
 semantic_memory = "bub.plugins.semantic_memory.hook_impl:SemanticMemoryPlugin"
 
 [project.urls]
-Repository = "https://github.com/bubbuild/bub"
+Repository = "https://github.com/yibie/bub-semantic-memory"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
