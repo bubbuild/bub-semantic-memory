@@ -12,15 +12,15 @@ import pytest
 import pytest_asyncio
 from republic import TapeContext, TapeEntry
 
-from bub.plugins.semantic_memory.extractor import (
+from bub_semantic_memory.extractor import (
     _build_snapshot,
     _entries_to_text,
     _parse_llm_response,
     extract_semantics,
 )
-from bub.plugins.semantic_memory.hook_impl import build_semantic_context
-from bub.plugins.semantic_memory.models import Entity, Relation, SemanticSnapshot
-from bub.plugins.semantic_memory.store import SemanticStore
+from bub_semantic_memory.hook_impl import build_semantic_context
+from bub_semantic_memory.models import Entity, Relation, SemanticSnapshot
+from bub_semantic_memory.store import SemanticStore
 
 
 # ---------------------------------------------------------------------------

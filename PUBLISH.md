@@ -6,7 +6,7 @@
 ```
 
 ## 📦 What's Included
-- `src/bub/plugins/semantic_memory/` - 7 modules (652 lines)
+- `bub_semantic_memory/` - 7 modules (652 lines)
 - `tests/` - 43 tests
 - `README.md` - Documentation
 - `pyproject.toml` - PyPI metadata
@@ -49,7 +49,7 @@ Add `plugins/semantic-memory.json`:
 
 ## 📊 Package Info
 - **PyPI Name**: bub-semantic-memory
-- **Entry Point**: bub.plugins.semantic_memory.hook_impl:SemanticMemoryPlugin
+- **Entry Point**: bub_semantic_memory.hook_impl:SemanticMemoryPlugin
 - **Version**: 0.1.0
 - **Python**: 3.12+
 - **License**: Apache 2.0
@@ -59,6 +59,6 @@ Add `plugins/semantic-memory.json`:
 - [x] Tests: 43 passing
 - [x] Documentation: README.md
 - [x] pyproject.toml: Configured for PyPI
-- [x] Entry point: bub.plugins.semantic_memory
+- [x] Entry point: bub_semantic_memory
 
 Ready to publish! 🎉

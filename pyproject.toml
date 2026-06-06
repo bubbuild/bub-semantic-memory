@@ -18,10 +18,15 @@ dependencies = [
 ]
 
 [project.entry-points."bub"]
-semantic_memory = "bub.plugins.semantic_memory.hook_impl:SemanticMemoryPlugin"
+semantic_memory = "bub_semantic_memory.hook_impl:SemanticMemoryPlugin"
 
 [project.urls]
 Repository = "https://github.com/yibie/bub-semantic-memory"
 
-[tool.hatch.build.targets.wheel]
-packages = ["src"]
+
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.4.0",
+]

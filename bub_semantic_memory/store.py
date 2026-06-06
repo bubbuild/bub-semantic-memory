@@ -5,7 +5,7 @@ from pathlib import Path
 
 import aiofiles
 
-from bub.plugins.semantic_memory.types import SemanticSnapshot
+from bub_semantic_memory.types import SemanticSnapshot
 
 
 class SemanticStore:

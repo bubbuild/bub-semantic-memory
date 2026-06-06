@@ -15,7 +15,7 @@ from typing import Any
 from republic import LLM
 from republic.tape.entries import TapeEntry
 
-from bub.plugins.semantic_memory.models import Entity, Relation, SemanticSnapshot
+from bub_semantic_memory.models import Entity, Relation, SemanticSnapshot
 
 logger = logging.getLogger(__name__)
 

@@ -11,7 +11,7 @@ from republic import LLM, TapeContext, TapeEntry
 from bub.builtin.settings import load_settings
 from bub.framework import BubFramework
 from bub.hookspecs import hookimpl
-from bub.plugins.semantic_memory.store import SemanticStore
+from bub_semantic_memory.store import SemanticStore
 
 
 def _build_default_context(
@@ -86,8 +86,8 @@ async def build_semantic_context(
         return messages
 
     try:
-        from bub.plugins.semantic_memory.extractor import extract_semantics
-        from bub.plugins.semantic_memory.context import _format_snapshots
+        from bub_semantic_memory.extractor import extract_semantics
+        from bub_semantic_memory.context import _format_snapshots
 
         entries_list = list(entries)
         if not entries_list:

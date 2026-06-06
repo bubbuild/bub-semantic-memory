@@ -8,9 +8,9 @@ from typing import Any
 from republic import LLM, TapeContext, TapeEntry
 
 import bub.builtin.context as _builtin_context
-from bub.plugins.semantic_memory import extractor
-from bub.plugins.semantic_memory.models import SemanticSnapshot
-from bub.plugins.semantic_memory.store import SemanticStore
+from bub_semantic_memory import extractor
+from bub_semantic_memory.models import SemanticSnapshot
+from bub_semantic_memory.store import SemanticStore
 
 
 async def build_semantic_context(
