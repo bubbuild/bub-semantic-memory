@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "bub-semantic-memory"
+version = "0.1.0"
+description = "Semantic memory plugin for Bub"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Bub Community" }]
+requires-python = ">=3.12"
+dependencies = [
+    "bub>=0.3.0",
+    "republic>=0.5.4",
+    "pydantic>=2.0.0",
+    "aiofiles>=25.1.0",
+]
+
+[project.entry-points."bub"]
+semantic_memory = "bub.plugins.semantic_memory.hook_impl:SemanticMemoryPlugin"
+
+[project.urls]
+Repository = "https://github.com/bubbuild/bub"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
