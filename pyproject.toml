@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bub-semantic-memory"
-version = "0.1.0"
+version = "0.1.1"
 description = "Semantic memory plugin for Bub"
 readme = "README.md"
 license = { text = "Apache-2.0" }
