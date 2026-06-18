@@ -96,6 +96,17 @@ async def build_semantic_context(
         # Get tape_id from context
         tape_id = context.state.get("session_id", "unknown") if hasattr(context, "state") else "unknown"
 
+        # ponytail: cache snapshot within a turn — context.select fires every time
+        # the LLM rebuilds context (3-5x per turn in tool-use loops). Skip
+        # re-extraction when entries haven't changed.
+        last_entry_id = entries_list[-1].id
+        cache_key = f"_semantic_{tape_id}"
+        cached = context.state.get(cache_key)
+        if cached is not None and cached.get("last_entry_id") == last_entry_id:
+            if cached.get("block"):
+                messages.append(cached["block"])
+            return messages
+
         # Extract new semantics
         snapshot = await extract_semantics(entries_list, llm, tape_id=tape_id)
         if snapshot.entities or snapshot.relations:
@@ -105,7 +116,11 @@ async def build_semantic_context(
         snapshots = await store.load(tape_id)
         if snapshots:
             semantic_block = _format_snapshots(snapshots)
-            messages.append({"role": "system", "content": semantic_block})
+            block_msg = {"role": "system", "content": semantic_block}
+            messages.append(block_msg)
+            context.state[cache_key] = {"last_entry_id": last_entry_id, "block": block_msg}
+        else:
+            context.state[cache_key] = {"last_entry_id": last_entry_id, "block": None}
     except Exception as e:
         # Graceful degradation: if semantic extraction fails, just use base context
         import logging
@@ -120,14 +135,15 @@ class SemanticMemoryPlugin:
     def __init__(self, framework: BubFramework) -> None:
         self.framework = framework
         settings = load_settings()
-        from republic.tape import InMemoryTapeStore
+        from bub.builtin.store import EmptyTapeStore
 
-        tape_store = InMemoryTapeStore()
+        # ponytail: EmptyTapeStore — extractor only does one-shot chat_async(),
+        # no need to accumulate tape history. Semantic data lives in SemanticStore.
         self.llm = LLM(
             settings.model,
             api_key=settings.api_key,
             api_base=settings.api_base,
-            tape_store=tape_store,
+            tape_store=EmptyTapeStore(),
         )
         self.store = SemanticStore()
 

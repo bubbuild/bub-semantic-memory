@@ -364,6 +364,61 @@ class TestBuildSnapshot:
 # ---------------------------------------------------------------------------
 
 
+class TestSemanticContextCaching:
+    @pytest.mark.asyncio
+    async def test_second_call_uses_cache_no_llm(self, temp_storage: Path):
+        """Two calls with same entries: LLM called only once, second call uses cache."""
+        from republic import TapeContext
+
+        llm = MagicMock()
+        llm.chat_async = AsyncMock(
+            return_value=json.dumps(
+                {"entities": [{"id": "alice", "type": "person", "name": "Alice", "metadata": {}}], "relations": []}
+            )
+        )
+        store = SemanticStore(storage_root=temp_storage)
+        entries = [TapeEntry(id=1, kind="message", payload={"role": "user", "content": "Hello Alice"})]
+
+        ctx = TapeContext(state={"session_id": "tape-cache"})
+
+        # First call — should extract
+        msgs1 = await build_semantic_context(entries, ctx, llm=llm, store=store)
+        assert llm.chat_async.await_count == 1
+
+        # Second call with same entries — should use cache, no extra LLM call
+        msgs2 = await build_semantic_context(entries, ctx, llm=llm, store=store)
+        assert llm.chat_async.await_count == 1  # still 1
+        assert msgs2 == msgs1
+
+    @pytest.mark.asyncio
+    async def test_new_entries_bypass_cache(self, temp_storage: Path):
+        """When entries change (new last entry id), re-extracts."""
+        from republic import TapeContext
+
+        llm = MagicMock()
+        llm.chat_async = AsyncMock(
+            return_value=json.dumps(
+                {"entities": [{"id": "alice", "type": "person", "name": "Alice", "metadata": {}}], "relations": []}
+            )
+        )
+        store = SemanticStore(storage_root=temp_storage)
+
+        ctx = TapeContext(state={"session_id": "tape-cache2"})
+
+        entries_turn1 = [TapeEntry(id=1, kind="message", payload={"role": "user", "content": "Hi"})]
+        entries_turn2 = [
+            TapeEntry(id=1, kind="message", payload={"role": "user", "content": "Hi"}),
+            TapeEntry(id=2, kind="message", payload={"role": "assistant", "content": "Hello"}),
+        ]
+
+        await build_semantic_context(entries_turn1, ctx, llm=llm, store=store)
+        assert llm.chat_async.await_count == 1
+
+        # Different last entry → re-extracts
+        await build_semantic_context(entries_turn2, ctx, llm=llm, store=store)
+        assert llm.chat_async.await_count == 2
+
+
 class TestSemanticContextBuilding:
     @pytest.mark.asyncio
     async def test_build_semantic_context_message_entries(self, sample_entries: list[TapeEntry]):
