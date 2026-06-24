@@ -111,3 +111,88 @@ def _format_snapshots(snapshots: list[SemanticSnapshot]) -> str:
         lines.append(f"- {from_name} --{relation.type}--> {to_name}")
 
     return "\n".join(lines)
+
+
+def _format_snapshots_filtered(
+    snapshots: list[SemanticSnapshot],
+    cues: set[str],
+) -> str:
+    """Render snapshots, keeping only entities/relations relevant to *cues*.
+
+    An entity is kept when any cue is a substring of its name or type.  A
+    relation is kept when at least one endpoint is kept, or when any cue is a
+    substring of the relation type.  When a relation is kept via the one-endpoint
+    rule, the OTHER endpoint entity is also kept (1-hop relation traversal) —
+    this bridges the recall gap when the question word ("research") differs from
+    the answer word ("adoption agencies") but they are connected via a relation.
+    """
+    if not cues:
+        # No usable cues means we cannot safely filter; fall back to the full view.
+        return _format_snapshots(snapshots)
+
+    seen_entity_ids: set[str] = set()
+    seen_relation_keys: set[tuple[str, str, str]] = set()
+
+    all_entities: list[Entity] = []
+    all_relations: list[Relation] = []
+    id_to_name: dict[str, str] = {}
+    id_to_entity: dict[str, Entity] = {}
+
+    def _matches_cues(text: str) -> bool:
+        lowered = text.lower()
+        return any(cue in lowered for cue in cues)
+
+    # First pass: collect entities that match a cue.
+    for snap in snapshots:
+        for entity in snap.entities:
+            id_to_name[entity.id] = entity.name
+            id_to_entity[entity.id] = entity
+            if entity.id in seen_entity_ids:
+                continue
+            if _matches_cues(entity.name) or _matches_cues(entity.type):
+                seen_entity_ids.add(entity.id)
+                all_entities.append(entity)
+
+    # Second pass: keep relations with at least one endpoint kept, or type matches.
+    # When keeping, expand the kept entity set to include the other endpoint (1-hop).
+    new_entity_ids: set[str] = set()
+    for snap in snapshots:
+        for relation in snap.relations:
+            key = (relation.from_id, relation.to_id, relation.type)
+            if key in seen_relation_keys:
+                continue
+            from_kept = relation.from_id in seen_entity_ids
+            to_kept = relation.to_id in seen_entity_ids
+            one_endpoint_kept = from_kept or to_kept
+            if one_endpoint_kept or _matches_cues(relation.type):
+                seen_relation_keys.add(key)
+                all_relations.append(relation)
+                # 1-hop expansion: add the other endpoint entity.
+                if from_kept and not to_kept and relation.to_id not in new_entity_ids:
+                    new_entity_ids.add(relation.to_id)
+                if to_kept and not from_kept and relation.from_id not in new_entity_ids:
+                    new_entity_ids.add(relation.from_id)
+
+    # Third pass: add entities discovered via 1-hop relation traversal.
+    for eid in new_entity_ids:
+        if eid not in seen_entity_ids and eid in id_to_entity:
+            seen_entity_ids.add(eid)
+            all_entities.append(id_to_entity[eid])
+
+    entity_count = len(all_entities)
+    relation_count = len(all_relations)
+
+    lines: list[str] = ["## Semantic Memory", ""]
+
+    lines.append(f"### Entities ({entity_count}):")
+    for entity in all_entities:
+        lines.append(f"- {entity.type}:{entity.name} (id={entity.id})")
+
+    lines.append("")
+    lines.append(f"### Relations ({relation_count}):")
+    for relation in all_relations:
+        from_name = id_to_name.get(relation.from_id, relation.from_id)
+        to_name = id_to_name.get(relation.to_id, relation.to_id)
+        lines.append(f"- {from_name} --{relation.type}--> {to_name}")
+
+    return "\n".join(lines)

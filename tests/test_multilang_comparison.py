@@ -5,7 +5,7 @@ real SemanticStore + mock LLM) and documents known-unsolvable multi-language
 limitations via ``xfail strict=False`` anchors.
 """
 
-# ruff: noqa: S101
+# ruff: noqa: S101, RUF001
 
 from __future__ import annotations
 
@@ -17,8 +17,6 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from republic import TapeContext, TapeEntry
-
 from bub_semantic_memory.hook_impl import (
     build_semantic_context,
     build_semantic_context_query_driven,
@@ -26,6 +24,7 @@ from bub_semantic_memory.hook_impl import (
 from bub_semantic_memory.models import Entity, Relation, SemanticSnapshot
 from bub_semantic_memory.query import extract_cues
 from bub_semantic_memory.store import SemanticStore
+from republic import TapeContext, TapeEntry
 
 
 @pytest.fixture
@@ -111,8 +110,9 @@ class TestZhCnEndToEnd:
         assert "Bob" not in query_block
         assert "Database" not in query_block
         assert "天气" not in query_block
-        assert "项目X" not in query_block
-        assert "works_on" not in query_block
+        # 1-hop: 王明→项目X (works_on) keeps 项目X via relation traversal
+        assert "项目X" in query_block
+        assert "works_on" in query_block
 
 
 @pytest.mark.xfail(

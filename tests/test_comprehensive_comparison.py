@@ -20,16 +20,13 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from republic import TapeContext, TapeEntry
-
 from bub_semantic_memory.hook_impl import (
     build_semantic_context,
     build_semantic_context_query_driven,
 )
 from bub_semantic_memory.models import Entity, Relation, SemanticSnapshot
-from bub_semantic_memory.query import extract_cues
 from bub_semantic_memory.store import SemanticStore
-
+from republic import TapeContext, TapeEntry
 
 # ---------------------------------------------------------------------------
 # Fixtures: stores
@@ -91,28 +88,26 @@ def store_zh_cn() -> SemanticStore:
 
 @pytest.fixture
 def store_quadrants() -> SemanticStore:
-    """4 entities + 6 relations covering 4 quadrant rules for D5."""
+    """Sparse graph: 5 entities, 2 disconnected groups, for D5 1-hop test.
+
+    Group 1 (reachable from "Alice" cue): Alice -> Bob (friend)
+    Group 2 (NOT reachable): Carol -> Database (uses)
+    Isolated: Weather (no relations at all)
+    """
     with tempfile.TemporaryDirectory() as tmp:
         store = SemanticStore(storage_root=Path(tmp))
         alice = Entity(type="person", name="Alice")
-        projx = Entity(type="task", name="ProjectX")
-        vscode = Entity(type="tool", name="VSCode")
+        bob = Entity(type="person", name="Bob")
+        carol = Entity(type="person", name="Carol")
         db = Entity(type="concept", name="Database")
+        weather = Entity(type="concept", name="Weather")
         snap = SemanticSnapshot(
-            entities=(alice, projx, vscode, db),
+            entities=(alice, bob, carol, db, weather),
             relations=(
-                # Both-kept: Alice+ProjectX both match cue "alice"+"projectx"
-                Relation(from_id=alice.id, to_id=projx.id, type="works_on"),
-                # Both-kept: ProjectX+VSCode both match
-                Relation(from_id=projx.id, to_id=vscode.id, type="works_on"),
-                # One-kept: Alice kept, Database not
-                Relation(from_id=alice.id, to_id=db.id, type="mentions"),
-                # One-kept: VSCode kept, Database not
-                Relation(from_id=vscode.id, to_id=db.id, type="depends_on"),
-                # Type-only: Database self-ref, cue "vscode" / "projectx" — no type match
-                Relation(from_id=db.id, to_id=db.id, type="self_ref"),
-                # Type-only: Database→VSCode — one endpoint not kept
-                Relation(from_id=db.id, to_id=vscode.id, type="uses"),
+                # Reachable group: Alice -> Bob
+                Relation(from_id=alice.id, to_id=bob.id, type="friend"),
+                # Unreachable group: Carol -> Database
+                Relation(from_id=carol.id, to_id=db.id, type="uses"),
             ),
             tape_id="quad-tape", anchor_id="a0",
         )
@@ -297,16 +292,20 @@ class TestComprehensiveComparison:
 
     # ---- D5: relation retention quadrants ----
     @pytest.mark.asyncio
-    async def test_D5_relation_retention_quadrants(
+    async def test_D5_relation_retention_1hop(
         self,
         store_quadrants: SemanticStore,
         empty_llm: MagicMock,
         monkeypatch: pytest.MonkeyPatch,
         _summary: list[str],
     ) -> None:
+        """D5: 1-hop relation traversal. Query "Alice";
+        Alice matches cue -> kept. Bob kept via Alice->Bob (friend) 1-hop.
+        Carol, Database, Weather are NOT reachable -> dropped.
+        """
         monkeypatch.setenv("BUB_SEMANTIC_LANGS", "en")
         ctx = TapeContext(state={"session_id": "quad-tape"})
-        entries = [TapeEntry(id=1, kind="message", payload={"role": "user", "content": "Alice ProjectX VSCode"})]
+        entries = [TapeEntry(id=1, kind="message", payload={"role": "user", "content": "Alice"})]
 
         baseline = await build_semantic_context(entries, ctx, llm=empty_llm, store=store_quadrants)
         query = await build_semantic_context_query_driven(entries, ctx, llm=empty_llm, store=store_quadrants)
@@ -314,30 +313,28 @@ class TestComprehensiveComparison:
         b, q = _semantic_block(baseline), _semantic_block(query)
         assert b is not None and q is not None
 
-        _summary.append(f"D5 | 4e6r quadrants | baseline={len(b)}c | query={len(q)}c")
+        _summary.append(f"D5 | 5e2r sparse 1-hop | baseline={len(b)}c | query={len(q)}c")
 
-        print(f"\n--- D5: relation retention quadrants ---\nbaseline ({len(b)}c):\n{b}\nquery ({len(q)}c):\n{q}")
+        print(f"\n--- D5: 1-hop relation traversal ---\nbaseline ({len(b)}c):\n{b}\nquery ({len(q)}c):\n{q}")
 
-        # Both-kept relations survive
-        assert "works_on" in q
-        # The quadrant store has TWO "works_on" relations (Alice→ProjectX, ProjectX→VSCode) — count = 2.
-        assert q.count("works_on") == 2
+        # Direct cue match: Alice kept.
+        assert "Alice" in q
+        # 1-hop: Bob kept via Alice->Bob (friend) relation.
+        assert "Bob" in q
+        assert "friend" in q
 
-        # One-kept (alice→database mentions): Database not kept, "mentions" substring checks fails.
-        assert "mentions" not in q
-        # One-kept (vscode→database depends_on): "depends_on" not matched.
-        assert "depends_on" not in q
+        # Disconnected group: Carol, Database NOT reachable from Alice.
+        assert "Carol" not in q
+        assert "Database" not in q
+        assert "uses" not in q  # Carol->Database relation dropped
 
-        # Both-not (database→database self_ref)
-        assert "self_ref" not in q
+        # Isolated entity: Weather not reachable.
+        assert "Weather" not in q
 
-        # Type-only (database→vscode uses): "uses" — does any cue match "uses"? None of {'alice','projectx','vscode','alice projectx vscode'} match.
-        assert "uses" not in q
-
-        # Baseline: no filtering — Database and all 6 relations present.
+        # Baseline: full view has everything.
+        assert "Carol" in b
         assert "Database" in b
-        assert "self_ref" in b
-        assert b.count("works_on") == 2
+        assert "Weather" in b
 
     # ---- D6: multi-turn accumulation growth ----
     @pytest.mark.asyncio
