@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
+import re
 from collections.abc import Iterable
 from typing import Any
 
@@ -11,7 +14,10 @@ from republic import LLM, TapeContext, TapeEntry
 from bub.builtin.settings import load_settings
 from bub.framework import BubFramework
 from bub.hookspecs import hookimpl
+from bub_semantic_memory.query import extract_cues, extract_query
 from bub_semantic_memory.store import SemanticStore
+
+logger = logging.getLogger(__name__)
 
 
 def _build_default_context(
@@ -86,8 +92,8 @@ async def build_semantic_context(
         return messages
 
     try:
-        from bub_semantic_memory.extractor import extract_semantics
         from bub_semantic_memory.context import _format_snapshots
+        from bub_semantic_memory.extractor import extract_semantics
 
         entries_list = list(entries)
         if not entries_list:
@@ -125,6 +131,95 @@ async def build_semantic_context(
         # Graceful degradation: if semantic extraction fails, just use base context
         import logging
         logging.warning(f"Semantic extraction failed: {e}")
+
+    return messages
+
+
+async def build_semantic_context_query_driven(
+    entries: Iterable[TapeEntry],
+    context: TapeContext,
+    llm: LLM | None = None,
+    store: SemanticStore | None = None,
+) -> list[dict[str, Any]]:
+    """Build context with query-driven semantic memory.
+
+    Works like :func:`build_semantic_context` but only injects historical
+    entities and relations that match cues extracted from the current query.
+    This reduces token usage while preserving recall for the current turn.
+    """
+    messages = _build_default_context(entries)
+
+    if llm is None or store is None:
+        return messages
+
+    try:
+        from bub_semantic_memory.context import _format_snapshots_filtered
+        from bub_semantic_memory.extractor import extract_semantics
+
+        entries_list = list(entries)
+        if not entries_list:
+            return messages
+
+        tape_id = context.state.get("session_id", "unknown") if hasattr(context, "state") else "unknown"
+
+        last_entry_id = entries_list[-1].id
+        cache_key = f"_semantic_query_{tape_id}"
+        cached = context.state.get(cache_key)
+        if cached is not None and cached.get("last_entry_id") == last_entry_id:
+            if cached.get("block"):
+                messages.append(cached["block"])
+            return messages
+
+        # Extract new semantics from the current turn and persist them.
+        snapshot = await extract_semantics(entries_list, llm, tape_id=tape_id)
+        if snapshot.entities or snapshot.relations:
+            await store.append(tape_id, snapshot)
+
+        # Derive cues from the current user query.
+        query = extract_query(entries_list)
+        languages = os.environ.get("BUB_SEMANTIC_LANGS", "en").split(",")
+        cues = extract_cues(query, languages=languages)
+
+        # Load all historical snapshots, but only render the relevant subset.
+        snapshots = await store.load(tape_id)
+        if snapshots and cues:
+            semantic_block = _format_snapshots_filtered(snapshots, cues)
+            block_msg = {"role": "system", "content": semantic_block}
+            messages.append(block_msg)
+            context.state[cache_key] = {"last_entry_id": last_entry_id, "block": block_msg}
+
+            # Instrumentation: report query-driven filtering performance.
+            _em = re.search(r"Entities \((\d+)\)", semantic_block)
+            _rm = re.search(r"Relations \((\d+)\)", semantic_block)
+            kept_e = int(_em.group(1)) if _em else 0
+            kept_r = int(_rm.group(1)) if _rm else 0
+            total_e = sum(len(s.entities) for s in snapshots)
+            total_r = sum(len(s.relations) for s in snapshots)
+            logger.info(
+                "query-driven cues=%s langs=%s %dent->%dent %drel->%drel %dc block",
+                cues, languages, total_e, kept_e, total_r, kept_r, len(semantic_block),
+            )
+        elif snapshots:
+            # No usable cues: fall back to the full formatter.
+            from bub_semantic_memory.context import _format_snapshots
+
+            semantic_block = _format_snapshots(snapshots)
+            block_msg = {"role": "system", "content": semantic_block}
+            messages.append(block_msg)
+            context.state[cache_key] = {"last_entry_id": last_entry_id, "block": block_msg}
+
+            total_e = sum(len(s.entities) for s in snapshots)
+            total_r = sum(len(s.relations) for s in snapshots)
+            logger.info(
+                "query-driven FALLBACK (no cues) langs=%s %dent %drel %dc block",
+                languages, total_e, total_r, len(semantic_block),
+            )
+        else:
+            context.state[cache_key] = {"last_entry_id": last_entry_id, "block": None}
+    except Exception as e:
+        import logging
+
+        logging.warning(f"Query-driven semantic extraction failed: {e}")
 
     return messages
 
