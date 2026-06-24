@@ -19,7 +19,7 @@ import os
 import re
 import sys
 import urllib.request
-from collections import Counter, defaultdict
+from collections import defaultdict
 from pathlib import Path
 
 # Ensure plugin is importable
@@ -29,7 +29,7 @@ from bub_semantic_memory.context import _format_snapshots, _format_snapshots_fil
 from bub_semantic_memory.models import Entity, SemanticSnapshot
 from bub_semantic_memory.query import extract_cues
 from bub_semantic_memory.store import SemanticStore
-
+from republic.tape.entries import TapeEntry
 
 # ---------------------------------------------------------------------------
 # Config
@@ -70,23 +70,21 @@ _STOPWORDS: frozenset[str] = frozenset({
     "hey", "hi", "hello", "thanks", "thank", "right", "let",
     "say", "said", "tell", "told", "ask", "asked", "reply", "replied",
     "well", "want", "need", "call", "called", "look", "looked",
-    "thing", "things", "way", "ways", "people", "person",
+    "things", "ways", "people", "person",
     "everything", "nothing", "something", "anything",
     "everyone", "someone", "anyone", "everybody", "somebody", "nobody",
-    "really", "actually", "basically", "probably", "maybe", "perhaps",
+    "actually", "basically", "probably", "maybe", "perhaps",
     "much", "many", "lot", "lots", "little", "few",
-    "sure", "okay", "alright", "fine", "great", "good", "nice",
-    "right", "wrong", "true", "false", "yes", "no",
-    "oh", "ah", "um", "hmm", "uh",
-    "going", "go", "went", "gone",
-    "come", "came", "coming",
-    "take", "took", "taking", "taken",
-    "make", "made", "making",
+    "sure", "alright", "fine", "great", "good", "nice",
+    "wrong", "oh", "ah", "um", "hmm", "uh",
+    "going", "went", "gone",
+    "came", "coming",
+    "took", "taking", "taken",
+    "making",
     "give", "gave", "given", "giving",
-    "let", "lets", "letting",
-    "back", "still", "even", "already",
-    "also", "though", "although",
-    "then", "than", "else", "otherwise",
+    "lets", "letting",
+    "back", "though", "although",
+    "than", "else", "otherwise",
 })
 
 
@@ -183,6 +181,61 @@ def _build_conversation_snapshots(
         snapshots.append(snap)
 
     return snapshots, session_texts
+
+
+
+def _build_llm_snapshots(
+    conversation: dict,
+    tape_id: str,
+) -> tuple[list[SemanticSnapshot], list[str]]:
+    """Build one snapshot per session using the real LLM extractor."""
+    import asyncio
+    from bub_semantic_memory.extractor import extract_semantics
+
+    llm = _build_llm()
+    sess_keys = sorted(
+        (k for k in conversation if re.match(r"session_\d+$", k)),
+        key=lambda k: int(k.split("_")[1]),
+    )
+    snapshots = []
+    session_texts = []
+
+    for skey in sess_keys:
+        turns = conversation.get(skey, [])
+        if not isinstance(turns, list):
+            continue
+
+        # Convert session turns to TapeEntry objects
+        entries = []
+        for turn in turns:
+            if isinstance(turn, dict):
+                speaker = turn.get("speaker", "user")
+                text = turn.get("text", "")
+                if text:
+                    role = "user" if speaker != "assistant" else "assistant"
+                    entries.append(TapeEntry(
+                        id=len(entries),
+                        kind="message",
+                        payload={"role": role, "content": text},
+                    ))
+
+        if not entries:
+            continue
+
+        session_text = "\n".join(str(t) for t in entries)
+        session_texts.append(session_text)
+
+        try:
+            snapshot = asyncio.run(extract_semantics(entries, llm, tape_id=tape_id, anchor_id=skey))
+        except Exception as exc:
+            print(f"    [WARN] LLM extraction failed for {skey}: {exc} — using empty snapshot")
+            from bub_semantic_memory.models import SemanticSnapshot
+            snapshot = SemanticSnapshot(entities=(), relations=(), tape_id=tape_id, anchor_id=skey)
+
+        snapshots.append(snapshot)
+
+    return snapshots, session_texts
+
 
 
 # ---------------------------------------------------------------------------
@@ -285,7 +338,21 @@ def download_data(force: bool = False) -> Path:
     return DATA_PATH
 
 
-def run_eval(languages: tuple[str, ...]) -> float:
+def _build_llm():
+    """Create a real LLM instance matching the plugin's pattern."""
+    from bub.builtin.settings import load_settings
+    from bub.builtin.store import EmptyTapeStore
+    from republic import LLM
+    settings = load_settings()
+    return LLM(
+        settings.model,
+        api_key=settings.api_key,
+        api_base=settings.api_base,
+        tape_store=EmptyTapeStore(),
+    )
+
+
+def run_eval(languages: tuple[str, ...], use_real_llm: bool = False, max_convs: int = 10) -> float:
     """Run evaluation over all LoCoMo conversations."""
     print(f"Loading {DATA_PATH}...")
     with open(DATA_PATH, encoding="utf-8") as f:
@@ -295,7 +362,7 @@ def run_eval(languages: tuple[str, ...]) -> float:
     all_results: list[dict] = []
     cat_stats: dict[int, list[dict]] = defaultdict(list)
 
-    for cidx, conv in enumerate(conversations):
+    for cidx, conv in enumerate(conversations[:max_convs]):
         tape_id = f"locomo_{cidx}"
         conversation = conv.get("conversation", {})
         qa_list = conv.get("qa", [])
@@ -308,10 +375,13 @@ def run_eval(languages: tuple[str, ...]) -> float:
               f"{sum(1 for k in conversation if re.match(r'session_\d+$', k))} sessions, {len(qa_list)} QA pairs")
 
         # Build all snapshots for this conversation
-        snapshots, _stexts = _build_conversation_snapshots(conversation, tape_id)
+        if use_real_llm:
+            snapshots, _stexts = _build_llm_snapshots(conversation, tape_id)
+        else:
+            snapshots, _stexts = _build_conversation_snapshots(conversation, tape_id)
 
         if not snapshots:
-            print(f"    -> no entities extracted (empty snapshots)")
+            print("    -> no entities extracted (empty snapshots)")
             continue
 
         # Evaluate each QA pair against accumulated store
@@ -415,6 +485,14 @@ def main() -> None:
         "--languages", default="en",
         help="Comma-separated BUB_SEMANTIC_LANGS (default: en)"
     )
+    parser.add_argument(
+        "--use-real-llm", action="store_true",
+        help="Use real LLM (BUB_MODEL) for entity extraction instead of regex"
+    )
+    parser.add_argument(
+        "--max-convs", type=int, default=10,
+        help="Max conversations to evaluate (default: 10, full dataset)"
+    )
     args = parser.parse_args()
 
     os.environ["BUB_SEMANTIC_LANGS"] = args.languages
@@ -430,7 +508,11 @@ def main() -> None:
         print(f"  file size: {DATA_PATH.stat().st_size // 1024} KB")
         return
 
-    run_eval(languages=tuple(l.strip() for l in args.languages.split(",")))
+    run_eval(
+        languages=tuple(l.strip() for l in args.languages.split(",")),
+        use_real_llm=args.use_real_llm,
+        max_convs=args.max_convs,
+    )
 
 
 if __name__ == "__main__":
