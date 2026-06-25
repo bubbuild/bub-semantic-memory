@@ -20,8 +20,13 @@ from bub_semantic_memory.models import Entity, Relation, SemanticSnapshot
 logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = """\
-You are a semantic extraction assistant. Given a snippet of conversation history, \
-identify the key entities and the relations between them.
+You are a thorough semantic extraction assistant. Given a snippet of conversation \
+history, identify ALL entities and ALL relations between them.
+
+Be exhaustive. Extract every person, place, event, activity, topic, item, \
+organization, date, and concept mentioned — including minor ones. Also extract \
+relations describing what each person did, said, mentioned, described, participated \
+in, experienced, planned, owned, or is associated with.
 
 Respond ONLY with a single valid JSON object — no markdown fences, no prose. \
 The JSON must conform exactly to this schema:
@@ -38,8 +43,9 @@ The JSON must conform exactly to this schema:
 Guidelines:
 - Use concise, lowercase slugs for entity ids (e.g. "alice", "deploy_task").
 - Entity types must be one of: person, task, event, concept.
-- Relation types are free-form verbs/labels (e.g. "creates", "depends_on", "mentions").
-- Only include entities and relations that are clearly present or implied in the text.
+- Relation types are free-form verbs/labels (e.g. "creates", "depends_on", "mentions", "said_about").
+- Extract at least 10-25 entities and 10-20 relations from a typical conversation snippet.
+- Include minor-sounding activities (watched TV, walked dog) — they help downstream recall.
 - If nothing meaningful can be extracted, return {"entities": [], "relations": []}.
 """
 
@@ -179,7 +185,7 @@ async def extract_semantics(
     *,
     tape_id: str = "",
     anchor_id: str = "",
-    max_tokens: int = 1000,
+    max_tokens: int = 4000,
 ) -> SemanticSnapshot:
     """Extract semantic entities and relations from a list of TapeEntry objects.
 
