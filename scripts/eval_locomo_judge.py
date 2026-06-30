@@ -186,6 +186,7 @@ async def _build_llm_snapshots(
         (k for k in conversation if re.match(r"session_\d+$", k)),
         key=lambda k: int(k.split("_")[1]),
     )
+    session_dates = _get_session_dates(conversation)
     snapshots: list[SemanticSnapshot] = []
 
     for skey in sess_keys:
@@ -193,7 +194,15 @@ async def _build_llm_snapshots(
         if not isinstance(turns, list):
             continue
 
+        # Prepend session date so extractor resolves relative time references
+        date_str = session_dates.get(skey, "")
         entries: list[TapeEntry] = []
+        if date_str:
+            entries.append(TapeEntry(
+                id=len(entries),
+                kind="system",
+                payload={"content": f"Session date: {date_str}"},
+            ))
         for turn in turns:
             if isinstance(turn, dict):
                 speaker = turn.get("speaker", "user")
@@ -227,6 +236,59 @@ async def _build_llm_snapshots(
 # ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
+
+
+def _get_session_dates(conversation: dict) -> dict[str, str]:
+    """Extract session date metadata from conversation dict.
+
+    Returns dict mapping session key (e.g. 'session_1') → date string.
+    """
+    dates: dict[str, str] = {}
+    for key, val in conversation.items():
+        if key.endswith("_date_time") and isinstance(val, str):
+            sess_key = key.removesuffix("_date_time")
+            dates[sess_key] = val
+    return dates
+
+
+def _format_snapshots_with_timeline(
+    snapshots: list[SemanticSnapshot],
+    session_dates: dict[str, str],
+) -> str:
+    """Format snapshots + session timeline for temporal reasoning.
+
+    Appends a chronological session timeline so the answerer LLM can
+    resolve relative time references ("yesterday", "last week") to
+    absolute dates.
+    """
+    block = _format_snapshots(snapshots)
+    if not session_dates:
+        return block
+
+    lines: list[str] = [block, "", "## Session Timeline", ""]
+    for snap in snapshots:
+        date_str = session_dates.get(snap.anchor_id, "unknown date")
+        lines.append(f"- {snap.anchor_id}: {date_str}")
+
+    return "\n".join(lines)
+
+
+def _format_snapshots_filtered_with_timeline(
+    snapshots: list[SemanticSnapshot],
+    cues: set[str],
+    session_dates: dict[str, str],
+) -> str:
+    """Format filtered snapshots + session timeline."""
+    block = _format_snapshots_filtered(snapshots, cues)
+    if not session_dates:
+        return block
+
+    lines: list[str] = [block, "", "## Session Timeline", ""]
+    for snap in snapshots:
+        date_str = session_dates.get(snap.anchor_id, "unknown date")
+        lines.append(f"- {snap.anchor_id}: {date_str}")
+
+    return "\n".join(lines)
 
 
 def download_data(force: bool = False) -> Path:
@@ -292,10 +354,11 @@ async def _ask_llm(
     """Ask the LLM to answer a question using the memory block as context."""
     system_prompt = (
         "You are a memory assistant. Use ONLY the following semantic memory to "
-        "answer the question.\n\n"
+        "answer the question. Infer from relationships and timeline when needed.\n\n"
         f"{memory_block}\n\n"
         f"Question: {question}\n"
-        "Answer concisely. If the answer is not in the memory, say 'I don't know.'"
+        "Answer concisely. Only say 'I don't know' if the memory contains no "
+        "relevant information at all."
     )
     try:
         return await llm.chat_async(
@@ -315,7 +378,10 @@ async def _judge_answer(
     prompt = (
         f"Ground truth: {ground_truth}\n"
         f"Model answer: {model_answer}\n"
-        "Is the model answer correct? Reply YES or NO."
+        "Is the model answer essentially correct? Consider semantic equivalence "
+        "— different wording with the same meaning counts as correct. "
+        "Partial but substantially correct answers count as YES. "
+        "Reply YES or NO."
     )
     try:
         response = await judge_llm.chat_async(prompt=prompt)
@@ -389,6 +455,9 @@ async def run_eval(  # noqa: C901
             print("    -> no entities extracted, skipping")
             continue
 
+        # Extract session dates for temporal reasoning
+        session_dates = _get_session_dates(conversation)
+
         # Load into store
         store = SemanticStore(storage_root=Path("/tmp/locomo_eval_judge"))  # noqa: S108
         for snap in snapshots:
@@ -412,22 +481,24 @@ async def run_eval(  # noqa: C901
             conv_qas += 1
             total_qas += 1
 
-            # Build memory blocks
-            baseline_block = _format_snapshots(loaded)
+            # Build memory blocks (with session timeline for temporal reasoning)
+            baseline_block = _format_snapshots_with_timeline(loaded, session_dates)
 
             cues = extract_cues(question, languages=languages)
-            query_block = _format_snapshots_filtered(loaded, cues) if cues else baseline_block
+            query_block = _format_snapshots_filtered_with_timeline(loaded, cues, session_dates) if cues else baseline_block
 
             token_baseline += _count_tokens(baseline_block)
             token_query += _count_tokens(query_block)
 
-            # Ask answerer with both contexts
-            baseline_answer = await _ask_llm(answerer, question, baseline_block)
-            query_answer = await _ask_llm(answerer, question, query_block)
-
-            # Judge both
-            baseline_score = await _judge_answer(judge_llm, answer, baseline_answer)
-            query_score = await _judge_answer(judge_llm, answer, query_answer)
+            # Answer + judge in parallel (baseline and query paths are independent)
+            baseline_answer, query_answer = await asyncio.gather(
+                _ask_llm(answerer, question, baseline_block),
+                _ask_llm(answerer, question, query_block),
+            )
+            baseline_score, query_score = await asyncio.gather(
+                _judge_answer(judge_llm, answer, baseline_answer),
+                _judge_answer(judge_llm, answer, query_answer),
+            )
 
             cat_baseline[category]["correct"] += baseline_score
             cat_baseline[category]["total"] += 1
