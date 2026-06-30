@@ -1,5 +1,7 @@
 # Semantic Memory Plugin for Bub
 
+> **Latest:** v0.1.2 — Query-driven filtering, multilang support, LoCoMo eval suite
+
 A plugin that extracts and retains semantic entities and relations from conversation histories, enriching agent context with semantic memory.
 
 ## Overview
@@ -10,6 +12,39 @@ This plugin intercepts the tape context building process to:
 3. **Inject memory** into subsequent agent prompts, enabling long-context awareness
 
 The plugin follows Bub's philosophy: it's completely optional, zero-config after installation, and hooks into the existing `build_tape_context` architecture without modifying core.
+
+## Release Notes
+
+### v0.1.2 (2026-06-29)
+
+**Query-Driven Filtering** — Cuts memory block size by 78-81% with minimal accuracy loss.
+
+- `extract_cues()`: Deterministic cue extraction from user queries (language-aware,
+  14 languages supported). Cues are used to filter entities/relations before injection.
+- `_format_snapshots_filtered()`: Renders only entities and relations relevant to the
+  current question, with 1-hop relation traversal to preserve answer-reachable nodes.
+
+**LoCoMo Evaluation Suite** — Two benchmark scripts against the ACL 2024 LoCoMo dataset.
+
+- `scripts/eval_locomo.py`: Recall/precision benchmark with token savings per category.
+- `scripts/eval_locomo_judge.py`: Mem0-protocol LLM-judge accuracy evaluation.
+  Session timeline injection fixes temporal recall (0% → 50-100%).
+  Baseline accuracy reaches 75-100% on DeepSeek (above Mem0's published 67%).
+
+**Multilang Support** — 14 languages via i18n entity patterns.
+
+- Language-aware stopwords, candidate patterns, and multi-word extraction for:
+  `en`, `zh-CN`, `zh-TW`, `ja`, `ko`, `ru`, `de`, `fr`, `es`, `it`, `pt-br`,
+  `be`, `hi`, `id`.
+- `BUB_SEMANTIC_LANGS` env var controls active languages (default: `en`).
+- Regex-based fallback for languages without i18n data.
+
+**Performance** — LLM extraction uses `EmptyTapeStore` to avoid unnecessary persistence;
+  snapshot loading is cached within a turn to avoid repeated I/O.
+
+**Breaking changes:** None (additive release).
+
+---
 
 ## Installation
 
@@ -98,10 +133,19 @@ The plugin **reuses your main LLM settings** (`BUB_MODEL`, `BUB_API_KEY`, etc.):
 # Your existing setup (e.g., DeepSeek)
 export BUB_MODEL=deepseek:deepseek-chat
 export BUB_API_KEY=sk-...
-uv run bub chat
 ```
 
-No separate `BUB_SEMANTIC_*` variables needed. Semantic extraction uses the same model as your agent.
+**Optional configuration:**
+
+```bash
+# Multilang support (default: en)
+export BUB_SEMANTIC_LANGS=en,zh-CN,ja
+
+# Query-driven filtering (off by default; set to enable)
+export BUB_SEMANTIC_QUERY_DRIVEN=1
+```
+
+No separate credentials needed.
 
 ## Testing
 
@@ -177,10 +221,10 @@ The agent **always** works, semantic memory is optional enhancement.
 
 ## Future Enhancements
 
-### Phase 2: Smart Retrieval
-- Vector embeddings for semantic similarity search
-- Retrieval-augmented context injection (only include relevant entities)
-- Reduces prompt bloat for long sessions
+### Phase 2: Smart Retrieval ✅ (partial — v0.1.2)
+- ~~Vector embeddings for semantic similarity search~~
+- ✅ Query-driven context filtering (reduce prompt bloat by 78-81%)
+- ✅ Language-aware cue extraction (14 languages)
 
 ### Phase 3: Advanced Graphs
 - Entity dependency analysis (who depends on what)

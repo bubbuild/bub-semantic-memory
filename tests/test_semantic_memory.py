@@ -4,14 +4,11 @@ from __future__ import annotations
 
 import json
 import tempfile
+from datetime import UTC
 from pathlib import Path
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-import pytest_asyncio
-from republic import TapeContext, TapeEntry
-
 from bub_semantic_memory.extractor import (
     _build_snapshot,
     _entries_to_text,
@@ -21,7 +18,7 @@ from bub_semantic_memory.extractor import (
 from bub_semantic_memory.hook_impl import build_semantic_context
 from bub_semantic_memory.models import Entity, Relation, SemanticSnapshot
 from bub_semantic_memory.store import SemanticStore
-
+from republic import TapeContext, TapeEntry
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -159,11 +156,10 @@ class TestSemanticSnapshotJson:
         assert snapshot.anchor_id == "a"
 
     def test_semantic_snapshot_created_at_is_utc(self):
-        from datetime import timezone
 
         snapshot = SemanticSnapshot(tape_id="t", anchor_id="a")
         assert snapshot.created_at.tzinfo is not None
-        assert snapshot.created_at.tzinfo == timezone.utc
+        assert snapshot.created_at.tzinfo == UTC
 
 
 class TestSemanticStoreAppendLoad:

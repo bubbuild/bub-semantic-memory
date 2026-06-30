@@ -27,7 +27,7 @@ class SemanticStore:
         path = self.tape_file_path(tape_id)
         if not path.exists():
             return []
-        async with aiofiles.open(path, mode="r", encoding="utf-8") as f:
+        async with aiofiles.open(path, encoding="utf-8") as f:
             lines = await f.readlines()
         snapshots: list[SemanticSnapshot] = []
         for line in lines:

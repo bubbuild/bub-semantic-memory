@@ -17,7 +17,7 @@ SemanticSnapshot
 """
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -106,5 +106,5 @@ class SemanticSnapshot(BaseModel):
     tape_id: str
     anchor_id: str
     created_at: datetime = Field(
-        default_factory=lambda: datetime.now(tz=timezone.utc)
+        default_factory=lambda: datetime.now(tz=UTC)
     )
