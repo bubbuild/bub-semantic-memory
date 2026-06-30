@@ -2,3 +2,6 @@
 __pycache__/
 uv.lock
 dist/
+.omo/
+.pi/
+.serena/
